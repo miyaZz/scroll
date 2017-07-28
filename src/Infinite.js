@@ -13,8 +13,7 @@ function fetch(size) {
   let list = [];
   if(size) number = size;
   for (let i = 0; i < number; i++) {
-    let item = randomFn();
-    list.push(item);
+    list.push({index: i, name: `第${i}条`});
   }
   return list;
 }
@@ -24,21 +23,36 @@ class Infinite extends Component {
   constructor(props) {
     super(props);
     this.threshold = 100; // 阀值
-    this.determinateSize = 2000; //展示数据的最大值
+    this.determinateSize = 20000; //展示数据的最大值
     this.initialIndex = 0; // 滚动开始的位置
+    this.preLength = 40; // 预加载数量
+    this.pageSize = 20; // 每页加载数量
     this.state = {
-      size: 15,
-      view: 0
+      length: this.preLength, // 已加载的数据长度
+      size: this.preLength, //渲染dom节点数
+      startIndex: 0, // 开始位置的Index,
+      display: [] //实际渲染的dom数
     };
+    this.data = [];
+    this.cache = {};
   }
 
   componentDidMount() {
     window.addEventListener('resize', this.updateFrame);
-    this.updateFrame();
+    this.data = fetch(this.preLength);
+    this.updateScrollParentDOM();
+    const {start, end} = this.getStartAndEnd();
+    const {index, count} = this.getTopItemAndSize(start, end);
+    const {size} = this.state;
+    this.setState({
+      display: this.data.slice(index, index+size)
+    })
   }
 
-  componentDidUpdate() {
-    this.constrain();
+  componentWillUpdate(nextProps, nextState) {
+    if(nextState.length !== this.state.length) {
+      this.data = fetch(nextState.length);
+    }
   }
 
   componentWillUnmount() {
@@ -49,14 +63,14 @@ class Infinite extends Component {
 
   getScrollParentDOM = () => {
     let el = findDOMNode(this);
-    let scollParentDOM = window;
-    while (el === el.parentElement) {
+    while (el) {
       // 获取当前元素的CSS属性
       switch (window.getComputedStyle(el).overflowY) {
-        case 'auto': case 'scroll': case 'overlay': return scollParentDOM = el;
+        case 'auto': case 'scroll': case 'overlay': return el;
       }
+      el = el.parentElement;
     }
-    return scollParentDOM;
+    return window;
   }
 
   updateScrollParentDOM = () => {
@@ -71,11 +85,6 @@ class Infinite extends Component {
     this.scrollParentDom.addEventListener('mousewheel', () => {});
   }
 
-  // componentWillReceiveProps(next) {
-  //   let {view, size} = this.state;
-  //   this.constrain();
-  // }
-
   // 是否与前一个状态相等
   isEqualPrev = (prevState, nextState) => {
     for (let key in nextState) if (prevState[key] !== nextState[key]) return false;
@@ -83,50 +92,34 @@ class Infinite extends Component {
   };
 
   // setState的封装,判断是否更新state
-  shouldUpdateState = (nextState, cb) => {
-    if(this.isEqualPrev(this.state, nextState)) return cb();
+  shouldUpdateState = (nextState) => {
+    if(this.isEqualPrev(this.state, nextState)) return;
     
-    this.setState(nextState, cb);
-  }
-
-  constrain() {
-    let {view, size} = this.state;
-    let length = 15;
-    let minSize = 15;
-    let nextSize = Math.max(size, minSize);
-    if (size > length) size = length;
-    let nextView = Math.max(Math.min(view, length - size), 0);
-    console.log(nextView, nextSize, view, size, 'nextView, nextSize, view, size');
-    this.shouldUpdateState({view: nextView, size: nextSize}, () => {})
+    this.setState(nextState);
   }
 
   // 获取滚动条
   getScrollTop = () => {
     const {scrollParentDom} = this;
-    const scollTop = scrollParentDom === window ?
-      document.body.scollTop || document.documentElement.scollTop :
-      scrollParentDom.scollTop;
-    return scollTop;
+    const scrollTop = scrollParentDom === window ?
+      document.body.scrollTop || document.documentElement.scrollTop :
+      scrollParentDom.scrollTop;
+    // console.log(scrollTop, '已滚动高度');
+    return scrollTop;
   }
 
   // 获取滚动条高度
   getScrollHeight = () => {
-    const {scrollParentDom} = this;
+    const {scrollParentDom, cache} = this;
     const {body, documentElement} = document;
     let scrollHeight = scrollParentDom === window ?
       Math.max(body.scrollHeight, documentElement.scrollHeight) :
       scrollParentDom.scrollHeight;
-    console.log(scrollHeight, '滚动条总高度');
-    return scrollHeight;
-  }
-
-  getStartAndEnd() {
-    const threshold = this.threshold;
-    const scrollTop = this.getScrollTop();
-    const start = Math.max(0, scrollTop - threshold);
-    let end = scrollTop + this.getViewportSize() + threshold;
-    console.log(start, end, 'start, end');
-    return {start, end};
+    let height = 0;
+    for(let k in this.cache) {
+      height +=  this.cache[k];
+    }
+    return scrollHeight
   }
 
   // 获取滚动视口高度
@@ -135,36 +128,144 @@ class Infinite extends Component {
     let viewportSize = scrollParentDom === window ?
       window.innerHeight :
       scrollParentDom.clientHeight;
-    console.log(viewportSize, '滚动条所在视口高度');
+    // console.log(viewportSize, '滚动条所在视口高度');
     return viewportSize;
   }
 
   updateFrame = cb => {
-    const {size} = this.state;
+    const {length} = this.state;
     this.updateScrollParentDOM();
-    this.setState({
-      size: size + 15
-    });
-    console.log('-=-=-=-=-=-=-=-=');
+    const {start, end} = this.getStartAndEnd();
+    const {index, count} = this.getTopItemAndSize(start, end);    
+    this.asyncLoad(end);
+    this.cacheSizes();
+    let display = this.data.slice(index, index+count)
+    this.shouldUpdateState({startIndex: index, size: count, display});
   }
 
-  itemRenderer = (index, key) => <div key={key} className={key%2 ? 'item' : 'item-trip'}>--{index}--</div>;
+  asyncLoad = end => {
+    const {length} = this.state;
+    console.log(length, 'length');
+    const {determinateSize, threshold, pageSize} = this;
+    const scrollHeight = this.getScrollHeight();
+    if(determinateSize) {
+      if(length < determinateSize && scrollHeight < end) {
+        this.setState({
+          length: length + pageSize > determinateSize ? determinateSize : length + pageSize
+        })
+      }else if(length > determinateSize) {
+        this.setState({
+          length: determinateSize
+        })
+      }
+    }else{
+      this.setState({
+        length: length + pageSize
+      })
+    }
+    
+  }
+
+  // 获取上下位置
+  getStartAndEnd() {
+    const {threshold} = this;
+    const scroll = this.getScrollTop();
+    const start = scroll;
+    let end = scroll + this.getViewportSize() + threshold;
+    console.log(start, end, 'start, end');
+    return {start, end};
+  }
+
+  //获取视窗内第一条元素的index,及到底部锚点的元素数量
+  getTopItemAndSize(start, end) {
+    const {length} = this.state;
+    const {pageSize} = this;
+    const maxIndex = length - 1;
+    let index = 0;
+    let count = 0;
+    let topHeight = 0;
+
+    while (index < maxIndex) {
+      const itemSize = this.getItemSize(index);
+      if (!itemSize || topHeight + itemSize > start) break;
+      topHeight += itemSize;
+      ++index;
+    }
+
+    let maxSize = length - index; 
+    while (count < maxSize && topHeight < end) {
+      const itemSize = this.getItemSize(index + count);
+      if (!itemSize) {
+        count = Math.min(count + this.pageSize, maxSize);
+        break;
+      }
+      topHeight += itemSize;
+      ++count;
+    }
+    console.log(index, count, 'index, count')
+    return {index, count}
+  }
+
+  cacheSizes = () => {
+    const {cache} = this;
+    const {startIndex} = this.state;
+    const itemEls = findDOMNode(this.doms).children;
+    for (let i = 0; i < itemEls.length; ++i) {
+      cache[itemEls[i].id] = itemEls[i].offsetHeight;
+    }
+  }
+
+  getItemSize = index => {
+    // state设置固定高度
+    const {cache} = this;
+
+    const {itemSize} = this.state;
+
+    if(itemSize) return itemSize;
+
+    if (index in cache) return cache[index];
+  }
+
+  getOffSet = () => {
+    const {startIndex} = this.state;
+    let top = 0;
+    for(let i = 0; i < startIndex; i++) {
+      if(this.cache[i]) {
+        top += this.cache[i];
+      }
+    }
+    return top;
+  }
+ 
+  itemRenderer = (content, key) => <div id={key} key={key} className={key%2 ? 'item' : 'item-trip'}>--{content}--</div>;
 
   itemsRenderer = (items, ref) => <div ref={ref}>{items}</div>;
 
   renderItems() {
-    const {view, size} = this.state;
+    const {startIndex, size, display} = this.state;
     const items = [];
-    for (let i = 0; i < size; ++i) items.push(this.itemRenderer(view + i, i));
+    const {data} = this;
+    for (let i = 0; i < display.length; ++i) {
+      items.push(this.itemRenderer(display[i].name, display[i].index))
+    };
     return this.itemsRenderer(items, c => this.doms = c);
   }
 
   render() {
     const {...props} = this.props;
     const items = this.renderItems();
+    let y = this.getOffSet();
+    const transform = `translate(0px, ${y}px)`;
+    const listStyle = {
+      msTransform: transform,
+      WebkitTransform: transform,
+      transform
+    };
     return (
       <div {...props}>
-        {items}
+        <div style={listStyle}>
+          {items}
+        </div>
       </div>
     );
   }
