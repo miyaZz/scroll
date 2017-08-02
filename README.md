@@ -8,8 +8,6 @@
 可用于展示数据的最大值，默认1000
 ###### pageSize (number)
 每页的数据量，默认20
-###### threshold (number)
-锚点位置距离视口上下边距的大小，默认200
 ###### preCount (number)
 首次加载的节点数量，默认30
 ###### dataSource (function || array)
