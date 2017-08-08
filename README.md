@@ -2,14 +2,15 @@
 #### 功能描述：
 无限滚动组件，可一次加载全部数据，也可以异步加载数据
 #### how to use
-###### itemRender (function)
-渲染列表内展示元素的方法,eg: `(content, key) => <div id={key} key={key}>{content}</div>`, 必须要有id和key
-###### determinateSize (number)
-可用于展示数据的最大值，默认1000
+###### async boolean
+标识组件为同步还是异步的标志位。true: 同步（一次加载所有数据），false: 异步（通过scroll函数异步获取数据）。
+###### itemRender (function) *
+渲染列表内展示元素的方法,eg: `record => <div id={record.id} key={record.id}>{o.name}</div>`, 必须要有id和key
+###### tombstoneRender (function)
+渲染占位元素的方法, eg: `record => <div id={record.id} key={record.id}>占位符</div`, 如传入该属性则必须传入id和key
 ###### pageSize (number)
 每页的数据量，默认20
-###### preCount (number)
-首次加载的节点数量，默认30
-###### dataSource (function || array)
-若传入的数据为数组，则表示组件类型为一次加载全部数据。
-若传入的函数类型，则表示该组件为异步加载数据，传入函数需为获取数据的方法，函数需返回一个数组。
+###### dataSource (array) *
+需进行展示的数据
+###### scroll (function)
+滚动时的回掉函数，作用等同于onScroll

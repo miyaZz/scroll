@@ -67,12 +67,12 @@ class Main extends Component {
   render() {
     return( 
     <div>
-      {/* <Infinite
+      <Infinite
         className='left'
         itemRenderer={this.renderItem}
         dataSource={fetch(null, 2000)}
         async={false}
-      /> */}
+      />
       <Infinite
         className='right'
         itemRenderer={this.renderItem}
