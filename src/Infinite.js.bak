@@ -6,15 +6,19 @@ class Infinite extends Component {
   static propTypes = {
     itemRenderer: PropTypes.func.isRequired, // 渲染list的方法
     tombstoneRender: PropTypes.func,
-    async: PropTypes.bool, //同步或异步 true: 异步
-    scroll: PropTypes.func, // onScroll
+    determinateSize: PropTypes.number, // 边界
     pageSize: PropTypes.number,
-    dataSource: PropTypes.array.isRequired
+    preCount: PropTypes.number, // 首次加载数量
+    dataSource: PropTypes.oneOfType([
+      PropTypes.array,
+      PropTypes.func
+    ])
   };
 
   static defaultProps = {
-    async: false,
+    determinateSize: 1000,
     pageSize: 20,
+    preCount: 30,
     tombstoneRender: o => {
       return(
         <div className={o.id%2 ? 'item' : 'item-trip'} key={o.id} id={o.id}>
@@ -26,34 +30,82 @@ class Infinite extends Component {
 
   constructor(props) {
     super(props);
-    this.threshold = 200;
+    this.threshold = 300;
+    this.async = typeof props.dataSource === 'function'
     this.state = {
-      dataCache: this.props.dataSource,
-      size: 0, //渲染dom节点数
-      startIndex: 0, // 开始位置的Index
+      dataCache: this.async ? [] : props.dataSource, // 全部数据缓存
+      length: this.async ? props.preCount : props.dataSource.length, // 已缓存的数据长度
+      size: props.preCount, //渲染dom节点数
+      startIndex: 0, // 开始位置的Index,
+      display: [] //需实际渲染的数据
     };
     this.cache = {}; // 存储节点信息 => {id: offsetheight, ...}
   }
 
+  componentWillMount() {
+    const {preCount, dataSource} = this.props;
+    const {dataCache} = this.state;
+    if(this.async) {
+      let data = dataSource(null, preCount);
+      this.setState({
+        dataCache: data
+      });
+    }
+  }
+
   componentDidMount() {
-    const {async} = this.props;
     const {dataCache} = this.state;
     window.addEventListener('resize', this.updateFrame);
     this.updateScrollParentDOM();
     const {start, end} = this.getStartAndEnd();
     const {index, count} = this.getTopItemAndSize(start, end);
-    const size = async ? dataCache.length : 30;
+    const {size} = this.state;
     this.setState({
-      size: size
+      display: dataCache.slice(index, index + size)
     })
   }
 
-  componentWillReceiveProps(nextProps) {
-    const {dataSource, pageSize, async} = this.props;
-    const {dataCache} = this.state;
-    if(async) {
-      this.replaceTombstones(nextProps.dataSource, dataSource);
-      this.updateFrame();
+  componentWillUpdate(nextProps, nextState) {
+    const {dataSource, pageSize} = this.props;
+    const {dataCache, length} = this.state;
+    if(this.async) {
+      if(nextState.length !== length) {
+        let _self = this;
+        let array = [];
+        for(let i = length; i < length + pageSize; i++) {
+          array.push({id: i, tombstone: true});
+        }
+        this.setState({
+          dataCache: dataCache.concat(array),
+        })
+        setTimeout(() =>{
+          let list = [];
+          let add = [];
+          add = add.concat(dataSource(length, pageSize));
+          console.log(add, 'data')
+          let tombstoneStartIndex = _.findIndex(dataCache, {tombstone: true});
+          let tombstoneEndIndex = _.findLastIndex(dataCache, {tombstone: true});
+          let _head = dataCache.slice(0, tombstoneStartIndex);
+          let _end = dataCache.slice(tombstoneEndIndex + 1);
+          if(!tombstoneStartIndex) {
+            list = dataCache.concat(add);
+          }else if(tombstoneEndIndex && tombstoneStartIndex && add.length < tombstoneEndIndex - tombstoneStartIndex + 1) {
+            list = [
+              ..._head,
+              ...add,
+              ..._end
+            ];
+          }else if(tombstoneEndIndex && tombstoneStartIndex &&  add.length >= tombstoneEndIndex - tombstoneStartIndex + 1){
+            list = [
+              ..._head,
+              ...add
+            ];
+          }
+          this.setState({
+            dataCache: list
+          });
+        }, 3000);
+      }
     }
   }
 
@@ -129,66 +181,45 @@ class Infinite extends Component {
   }
 
   updateFrame = cb => {
-    const {dataSource, pageSize, async, scroll} = this.props;
-    const {dataCache} = this.state;
+    const {dataSource, pageSize} = this.props;;
+    const {length, dataCache} = this.state;
     this.updateScrollParentDOM();
     const {start, end} = this.getStartAndEnd();
-    const {index, count} = this.getTopItemAndSize(start, end);   
+    const {index, count} = this.getTopItemAndSize(start, end);    
     this.cacheSizes();
     // 可缓存数据数据比实际算出的最后一个元素的index
-    if(async) {
+    if(this.async) {
       if(dataCache.length <= count + index) {
-        this.createTombstones();
-        scroll();
+        this.asyncLoad(end);
       }
-
-      this.shouldUpdateState({startIndex: index, size: count});
+      let display = dataCache.slice(index, index + count);
+      
+      this.shouldUpdateState({startIndex: index, size: count, display});
     }else{
       const scrollHeight = this.getScrollHeight();
       if(count + index < dataSource.length) {
-        this.shouldUpdateState({startIndex: index, size: count});
+        let display = dataCache.slice(index, index + count);
+        this.shouldUpdateState({startIndex: index, size: count, display});
       }
     }
   }
 
-  createTombstones = () => {
-    const {dataSource, pageSize} = this.props;
-    const {dataCache} = this.state;
-    let array = [];
-    for(let i = dataSource.length; i < dataSource.length + pageSize; i++) {
-      array.push({id: i, tombstone: true});
-    }
-    this.shouldUpdateState({dataCache: dataCache.concat(array)})
-  }
-
-  replaceTombstones = (nextDataSouce, dataSouce) => {
-    const {dataCache} = this.state;
-    const {start, end} = this.getStartAndEnd();
-    const {index, count} = this.getTopItemAndSize(start, end, nextDataSouce);
-    console.log(index, count, 'index, count');
-    let list = [];
-    let detal = nextDataSouce.length - dataSouce.length;
-    // 新数据比原数据少
-    if(detal < 0) {
-      Error('新数据比原数据少');
-    }else if(detal === 0) {
-      list = nextDataSouce;
+  asyncLoad = end => {
+    const {length} = this.state;
+    const {threshold} = this;
+    const {determinateSize, pageSize} = this.props;
+    const scrollHeight = this.getScrollHeight();
+    let next = length;
+    if(determinateSize) {
+      if(length < determinateSize && scrollHeight < end) {
+        next = length + pageSize > determinateSize ? determinateSize : length + pageSize;
+      }else if(length > determinateSize) {
+        next = determinateSize;
+      }
     }else{
-      let tombstoneStartIndex = _.findIndex(dataCache, {tombstone: true});
-      let tombstoneEndIndex = _.findLastIndex(dataCache, {tombstone: true});
-      let headOfTomb = dataCache.slice(0, tombstoneStartIndex);
-      let endOfTomb = dataCache.slice(tombstoneEndIndex + 1);
-      if(detal < tombstoneEndIndex - tombstoneStartIndex + 1) {
-        list = [
-          ...headOfTomb,
-          ...nextDataSouce.slice(tombstoneStartIndex, tombstoneStartIndex + detal),
-          ...dataCache.slice(tombstoneStartIndex + detal + 1)
-        ];
-      }else{
-        list = nextDataSouce;
-      }
+      next = length + pageSize
     }
-    this.shouldUpdateState({startIndex: index, size: count, dataCache: list});
+    this.shouldUpdateState({length: next});
   }
 
   // 获取上下位置
@@ -201,10 +232,9 @@ class Infinite extends Component {
   }
 
   //获取视窗内第一条元素的index,及到底部锚点的元素数量
-  getTopItemAndSize(start, end, nextDataSouce) {
+  getTopItemAndSize(start, end) {
     const {dataSource} = this.props;
-    const {dataCache} = this.state;
-    const length = dataCache.length;
+    const {length} = this.state;
     const {pageSize} = this.props;
     const maxIndex = length - 1;
     let index = 0;
@@ -228,12 +258,6 @@ class Infinite extends Component {
       topHeight += itemSize;
       ++count;
     }
-    // @todo 临时方案
-    // nextProps.dataSource 长度小于算出来的最大位置
-    // 取最大位置为 nextProps.dataSource 的末尾元素
-    // if(nextDataSouce && nextDataSouce.length <= index + count) {
-    //   count = nextDataSouce.length - index - 1;
-    // }
     return {index, count}
   }
 
@@ -271,7 +295,7 @@ class Infinite extends Component {
   tombstoneRender = o => {
     return(
       <div className={o.id%2 ? 'item' : 'item-trip'} key={o.id} id={o.id}>
-        <div>狂拽酷炫脑白金，我就是职业占地盘的</div>
+        <div>狂拽酷炫脑白金，我就是职业占地盘了</div>
         <div>收费标准：占一个位100块～</div>
         <div>你咋滴，不服，不服我就走😳</div>
       </div>
@@ -281,23 +305,21 @@ class Infinite extends Component {
   itemsRenderer = (items, ref) => <div ref={ref}>{items}</div>;
 
   renderItems() {
-    const {startIndex, size, dataCache} = this.state;
+    const {startIndex, size, display, dataCache} = this.state;
     const {itemRenderer, tombstoneRender} = this.props;
     const items = [];
-    for (let i = startIndex; i < startIndex + size; ++i) {
-      if(!dataCache[i]) {
-        return null;
-      }else if(dataCache[i].tombstone) {
-        items.push(tombstoneRender(dataCache[i]));
+    for (let i = 0; i < display.length; ++i) {
+      if(display[i].tombstone) {
+        items.push(tombstoneRender(display[i]));
       }else{
-        items.push(itemRenderer(dataCache[i]));
+        items.push(itemRenderer(display[i]));
       }
     };
     return this.itemsRenderer(items, c => this.doms = c);
   }
 
   render() {
-    const {pageSize, dataSource, itemRenderer, tombstoneRender, scroll, ...props} = this.props;
+    const {preCount, pageSize, determinateSize, dataSource, itemRenderer, tombstoneRender, ...props} = this.props;
     const items = this.renderItems();
     let y = this.getOffSet();
     const transform = `translate(0px, ${y}px)`;
