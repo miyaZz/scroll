@@ -1,7 +1,7 @@
 # scroll -- 无限滚动
 #### 功能描述：
 无限滚动组件，可一次加载全部数据，也可以异步加载数据
-#### how to use
+#### Props
 ###### async boolean
 标识组件为同步还是异步的标志位。true: 同步（一次加载所有数据），false: 异步（通过scroll函数异步获取数据）。
 ###### _*_ itemRender (function)
