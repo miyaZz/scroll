@@ -56,7 +56,7 @@ class Main extends Component {
 
   tombstoneRender = o => {
     return(
-      <div className={o.id%2 ? 'item' : 'item-trip'} key={o.id} id={o.id}>
+      <div className='item' key={o.id} id={o.id}>
         <div>狂拽酷炫脑白金，我就是职业占地盘的</div>
         <div>收费标准：占一个位100块～</div>
         <div>你咋滴，不服，不服我就走😳</div>
@@ -67,12 +67,12 @@ class Main extends Component {
   render() {
     return( 
     <div>
-      <Infinite
+      {/* <Infinite
         className='left'
         itemRenderer={this.renderItem}
         dataSource={fetch(null, 2000)}
         async={false}
-      />
+      /> */}
       <Infinite
         className='right'
         itemRenderer={this.renderItem}
@@ -80,7 +80,7 @@ class Main extends Component {
         async={true}
         dataSource={this.state.dataSource}
         pageSize={this.pageSize}
-        scroll={this.scroll}
+        onScroll={this.scroll}
       />    
     </div>
     );

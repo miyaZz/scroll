@@ -7,7 +7,7 @@ class Infinite extends Component {
     itemRenderer: PropTypes.func.isRequired, // 渲染list的方法
     tombstoneRender: PropTypes.func,
     async: PropTypes.bool, //同步或异步 true: 异步
-    scroll: PropTypes.func, // onScroll
+    onScroll: PropTypes.func, // onScroll
     pageSize: PropTypes.number,
     dataSource: PropTypes.array.isRequired
   };
@@ -48,9 +48,18 @@ class Infinite extends Component {
     })
   }
 
+  // componentWillUpdate(nextProps, nextState) {
+  //   const {dataSource, pageSize, async} = this.props;
+  //   if(async) {
+  //     this.replaceTombstones(nextProps.dataSource, dataSource);
+  //     this.updateFrame();
+  //   }
+  // }
+
   componentWillReceiveProps(nextProps) {
     const {dataSource, pageSize, async} = this.props;
     const {dataCache} = this.state;
+    console.log('componentWillReceiveProps', dataCache.length)
     if(async) {
       this.replaceTombstones(nextProps.dataSource, dataSource);
       this.updateFrame();
@@ -129,7 +138,7 @@ class Infinite extends Component {
   }
 
   updateFrame = cb => {
-    const {dataSource, pageSize, async, scroll} = this.props;
+    const {dataSource, pageSize, async, onScroll} = this.props;
     const {dataCache} = this.state;
     this.updateScrollParentDOM();
     const {start, end} = this.getStartAndEnd();
@@ -138,24 +147,30 @@ class Infinite extends Component {
     // 可缓存数据数据比实际算出的最后一个元素的index
     if(async) {
       if(dataCache.length <= count + index) {
-        this.createTombstones();
-        scroll();
+        this.createTombstones(count, index);
+        onScroll();
       }
-
       this.shouldUpdateState({startIndex: index, size: count});
     }else{
-      const scrollHeight = this.getScrollHeight();
-      if(count + index < dataSource.length) {
+      if(count + index < dataCache.length) {
         this.shouldUpdateState({startIndex: index, size: count});
       }
     }
   }
 
-  createTombstones = () => {
+  createTombstones = (count, index) => {
     const {dataSource, pageSize} = this.props;
     const {dataCache} = this.state;
+    console.log('createto',count, index, dataCache.length);
     let array = [];
-    for(let i = dataSource.length; i < dataSource.length + pageSize; i++) {
+    let tombstoneCount;
+    if(dataCache.length + pageSize >= count + index) {
+      tombstoneCount = dataCache.length + pageSize;
+    }else{
+      tombstoneCount = count + index;
+    }
+    // console.log('tombstoneCount', dataCache.length, tombstoneCount);
+    for(let i = dataCache.length; i < tombstoneCount; i++) {
       array.push({id: i, tombstone: true});
     }
     this.shouldUpdateState({dataCache: dataCache.concat(array)})
@@ -164,28 +179,37 @@ class Infinite extends Component {
   replaceTombstones = (nextDataSouce, dataSouce) => {
     const {dataCache} = this.state;
     const {start, end} = this.getStartAndEnd();
-    const {index, count} = this.getTopItemAndSize(start, end, nextDataSouce);
-    console.log(index, count, 'index, count');
+    let {index, count} = this.getTopItemAndSize(start, end);
     let list = [];
     let detal = nextDataSouce.length - dataSouce.length;
-    // 新数据比原数据少
+    console.log('replace', dataSouce, nextDataSouce, 'nextDataSouce');
+    let tombstoneStartIndex = _.findIndex(dataCache, {tombstone: true});
+    let tombstoneEndIndex = _.findLastIndex(dataCache, {tombstone: true});
+    // 新数据比原数据少(理论上该情况不存在)
     if(detal < 0) {
       Error('新数据比原数据少');
     }else if(detal === 0) {
-      list = nextDataSouce;
+      console.log(dataCache, tombstoneStartIndex, tombstoneEndIndex, '-=-=-=-', 'detal新数据与原数据相同');
+      // 新数据与原数据相同（已达到底部）
+      list = dataCache; // 清空墓碑，回滚，类似app中下拉刷新
+      // for(let k = tombstoneStartIndex; k < tombstoneEndIndex + 1; k++) {
+      //   delete this.cache[dataCache[k].id];
+      // }
     }else{
-      let tombstoneStartIndex = _.findIndex(dataCache, {tombstone: true});
-      let tombstoneEndIndex = _.findLastIndex(dataCache, {tombstone: true});
       let headOfTomb = dataCache.slice(0, tombstoneStartIndex);
       let endOfTomb = dataCache.slice(tombstoneEndIndex + 1);
+      // 差值比占位元素数量少
+      console.log('replace index detal', tombstoneEndIndex - tombstoneStartIndex);
       if(detal < tombstoneEndIndex - tombstoneStartIndex + 1) {
         list = [
           ...headOfTomb,
           ...nextDataSouce.slice(tombstoneStartIndex, tombstoneStartIndex + detal),
-          ...dataCache.slice(tombstoneStartIndex + detal + 1)
+          ...dataCache.slice(tombstoneStartIndex + detal)
         ];
+        console.log('list', dataCache, list);
       }else{
         list = nextDataSouce;
+        console.log('detail list', dataCache, list);
       }
     }
     this.shouldUpdateState({startIndex: index, size: count, dataCache: list});
@@ -201,7 +225,7 @@ class Infinite extends Component {
   }
 
   //获取视窗内第一条元素的index,及到底部锚点的元素数量
-  getTopItemAndSize(start, end, nextDataSouce) {
+  getTopItemAndSize(start, end) {
     const {dataSource} = this.props;
     const {dataCache} = this.state;
     const length = dataCache.length;
@@ -228,12 +252,6 @@ class Infinite extends Component {
       topHeight += itemSize;
       ++count;
     }
-    // @todo 临时方案
-    // nextProps.dataSource 长度小于算出来的最大位置
-    // 取最大位置为 nextProps.dataSource 的末尾元素
-    // if(nextDataSouce && nextDataSouce.length <= index + count) {
-    //   count = nextDataSouce.length - index - 1;
-    // }
     return {index, count}
   }
 
@@ -282,10 +300,17 @@ class Infinite extends Component {
 
   renderItems() {
     const {startIndex, size, dataCache} = this.state;
+
+    console.log('renderItems dataCache', dataCache.length)
     const {itemRenderer, tombstoneRender} = this.props;
     const items = [];
     for (let i = startIndex; i < startIndex + size; ++i) {
       if(!dataCache[i]) {
+        console.log('datacache', i)
+        console.log('startIndex', startIndex)
+        console.log('size', size)
+        console.log('dataCache', dataCache.length)
+        console.log('dataCache', dataCache)
         return null;
       }else if(dataCache[i].tombstone) {
         items.push(tombstoneRender(dataCache[i]));
